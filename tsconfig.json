@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "./dist",
+    "declaration": true
+  }
+}
