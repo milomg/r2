@@ -50,12 +50,14 @@ let context: {
 export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
   const self = {
     h: 0,
+    hSlot: -1,
     name,
     observers: [] as any[],
     observerSlots: [],
     sources: [] as any[],
     sourceSlots: [] as number[],
     v: null as B,
+    pushed: false,
     [Symbol.iterator]: function* () {
       if (context) {
         context.sources.push(self);
@@ -97,6 +99,7 @@ export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
     },
   };
 
+  self.hSlot = heap[self.h].length;
   heap[self.h].push(self);
 
   return self;
@@ -134,7 +137,11 @@ function adjustHeights(n: any) {
         }
       }
       if (found) {
-        heap[i].splice(heap[i].indexOf(el), 1);
+        const last = heap[i].pop()
+        if (el.hSlot < heap[i].length) {
+          heap[i][el.hSlot] = last;
+          last.hSlot = el.hSlot;
+        }
         el.h = maxh;
         heap[maxh].push(el);
         for (const c of el.observers) {
@@ -154,9 +161,14 @@ export function stabilize() {
       if (!s) {
         adjustHeights(el);
       } else {
-        heap[i].shift(); // remove ourselves
+        heap[i].shift();  // remove ourselves
+        el.pushed = false;
+        el.hSlot = -1;
         for (const c of el.observers) {
-          heap[c.h].push(c);
+          if (!c.pushed) {
+            c.pushed = true;
+            heap[c.h].push(c);
+          }
         }
       }
     }
