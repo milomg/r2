@@ -1,3 +1,12 @@
+interface Signal<T> {
+  name: string;
+  set: (v: T) => void;
+  observers: any[];
+  observerSlots: number[];
+  h: number;
+  [Symbol.iterator]: () => Generator<unknown, T, void>;
+}
+
 let heap: any[][] = [];
 let adjustHeightsHeap: any[][] = [];
 
@@ -6,8 +15,8 @@ for (let i = 0; i < 128; i++) {
   adjustHeightsHeap[i] = [];
 }
 
-export function s<T>(name: string, v: T) {
-  const self = {
+export function s<T>(name: string, v: T): Signal<T> {
+  const self: Signal<T> = {
     name,
     set(v2: T) {
       v = v2;
@@ -15,12 +24,15 @@ export function s<T>(name: string, v: T) {
         heap[o.h].push(o);
       }
     },
-    observers: [] as any[],
+    observers: [],
+    observerSlots: [],
     h: -1,
     [Symbol.iterator]: function* () {
       if (context) {
         context.sources.push(self);
+        context.sourceSlots.push(self.observerSlots.length);
         self.observers.push(context.me);
+        self.observerSlots.push(context.sourceSlots.length - 1);
       }
       return v;
     },
@@ -30,6 +42,7 @@ export function s<T>(name: string, v: T) {
 
 let context: {
   sources: any[];
+  sourceSlots: number[];
   h: number;
   me: any;
 } | null = null;
@@ -39,7 +52,9 @@ export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
     h: 0,
     name,
     observers: [] as any[],
+    observerSlots: [],
     sources: [] as any[],
+    sourceSlots: [] as number[],
     v: null as B,
     [Symbol.iterator]: function* () {
       if (context) {
@@ -56,6 +71,7 @@ export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
       const oldc = context;
       context = {
         sources: [],
+        sourceSlots: [],
         h: self.h,
         me: self,
       };
@@ -64,8 +80,10 @@ export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
         self.next = gen.next.bind(gen);
         removeSourceDeps(self);
         self.sources = context.sources;
+        self.sourceSlots = context.sourceSlots;
       } else {
         context.sources = self.sources;
+        context.sourceSlots = self.sourceSlots;
       }
       let el = self.next();
       const win = el.done;
@@ -85,8 +103,20 @@ export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
 }
 
 function removeSourceDeps(el: any) {
-  for (const s of el.sources) {
-    s.observers.splice(s.observers.indexOf(el), 1);
+  const n2 = el;
+  while (n2.sources!.length) {
+    const source = n2.sources!.pop(),
+      index = n2.sourceSlots!.pop(),
+      obs = source.observers;
+    if (obs && obs.length) {
+      const n = obs.pop(),
+        s = source.observerSlots!.pop();
+      if (index < obs.length) {
+        n.sourceSlots![s] = index;
+        obs[index] = n;
+        source.observerSlots![index] = s;
+      }
+    }
   }
 }
 

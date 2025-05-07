@@ -1,5 +1,6 @@
 import { bench } from "vitest";
 import { r, s, stabilize } from "../../src";
+import { batch, createMemo, createSignal } from "./queue";
 
 bench("updateComputations1to4", () => {
   const a = s("a", 1);
@@ -13,5 +14,21 @@ bench("updateComputations1to4", () => {
   for (let i = 0; i < 10000; i++) {
     a.set(i);
     stabilize();
+  }
+});
+
+bench("updateComputations1to4-solid", () => {
+  const [a, setA] = createSignal(1);
+  for (let i = 0; i < 4; i++) {
+    createMemo(function () {
+      const v = a();
+    });
+  }
+  batch(() => {});
+
+  for (let i = 0; i < 10000; i++) {
+    batch(() => {
+      setA(i);
+    });
   }
 });

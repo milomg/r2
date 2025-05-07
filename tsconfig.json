@@ -3,6 +3,7 @@
     "strict": true,
     "lib": ["ESNext", "DOM"],
     "target": "ESNext",
+    "module": "ESNext",
     "moduleResolution": "bundler",
     "outDir": "./dist",
     "declaration": true
