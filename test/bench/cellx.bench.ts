@@ -1,15 +1,16 @@
+// import { run, bench, boxplot, summary } from 'mitata';
 import { bench } from "vitest";
 import { r, s, stabilize } from "../../src";
 import { batch, createMemo, createSignal } from "./queue";
 
-type Computed<T> = ReturnType<typeof r<never, T, T>>;
+type Computed<T> = ReturnType<typeof r<T>>;
 
 bench("cellx", () => {
   const start = {
-    prop1: s("prop1", 1),
-    prop2: s("prop2", 2),
-    prop3: s("prop3", 3),
-    prop4: s("prop4", 4),
+    prop1: s(1),
+    prop2: s(2),
+    prop3: s(3),
+    prop4: s(4),
   };
 
   let layer: {
@@ -19,42 +20,35 @@ bench("cellx", () => {
     prop4: Computed<number>;
   } = start as any;
 
-  for (let i = 100; i > 0; i--) {
+  for (let i = 2000; i > 0; i--) {
     const m = layer;
     const s = {
-      prop1: r("p1" + i, function* () {
+      prop1: r(function* () {
         return yield* m.prop2;
       }),
-      prop2: r("p2" + i, function* () {
+      prop2: r(function* () {
         return (yield* m.prop1) - (yield* m.prop3);
       }),
-      prop3: r("p3" + i, function* () {
+      prop3: r(function* () {
         return (yield* m.prop2) + (yield* m.prop4);
       }),
-      prop4: r("p4" + i, function* () {
+      prop4: r(function* () {
         return yield* m.prop3;
       }),
     };
-
-    r("e1", function* () {
-      return yield* s.prop1;
-    });
-    r("e2", function* () {
-      return yield* s.prop2;
-    });
-    r("e3", function* () {
-      return yield* s.prop3;
-    });
-    r("e4", function* () {
-      return yield* s.prop4;
-    });
-
     layer = s;
   }
 
   const end = layer;
 
-  const before = [end.prop1.v, end.prop2.v, end.prop3.v, end.prop4.v] as const;
+  stabilize();
+
+  const before = [
+    end.prop1.value,
+    end.prop2.value,
+    end.prop3.value,
+    end.prop4.value,
+  ] as const;
 
   start.prop1.set(4);
   start.prop2.set(3);
@@ -62,7 +56,12 @@ bench("cellx", () => {
   start.prop4.set(1);
   stabilize();
 
-  const after = [end.prop1.v, end.prop2.v, end.prop3.v, end.prop4.v] as const;
+  const after = [
+    end.prop1.value,
+    end.prop2.value,
+    end.prop3.value,
+    end.prop4.value,
+  ] as const;
 });
 
 bench("cellx-solid", () => {
@@ -83,7 +82,7 @@ bench("cellx-solid", () => {
     prop3: start.prop3[0],
     prop4: start.prop4[0],
   };
-  for (let i = 100; i > 0; i--) {
+  for (let i = 2000; i > 0; i--) {
     const m = layer;
     const s = {
       prop1: createMemo(() => m.prop2()),

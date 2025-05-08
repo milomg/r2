@@ -3,9 +3,9 @@ import { r, s, stabilize } from "../../src";
 import { batch, createMemo, createSignal } from "./queue";
 
 bench("updateComputations1to4", () => {
-  const a = s("a", 1);
+  const a = s(1);
   for (let i = 0; i < 4; i++) {
-    r("b" + i, function* () {
+    r(function* () {
       const v = yield* a;
     });
   }

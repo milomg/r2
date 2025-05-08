@@ -1,38 +1,58 @@
 interface Signal<T> {
-  name: string;
+  height: -1;
   set: (v: T) => void;
-  observers: any[];
+  observers: Computed<unknown>[];
   observerSlots: number[];
-  h: number;
   [Symbol.iterator]: () => Generator<unknown, T, void>;
 }
 
-let heap: any[][] = [];
-let adjustHeightsHeap: any[][] = [];
-
-for (let i = 0; i < 128; i++) {
-  heap[i] = [];
-  adjustHeightsHeap[i] = [];
+interface Computed<T> {
+  height: number;
+  heapSlot: number;
+  observers: Computed<unknown>[];
+  observerSlots: number[];
+  sources: (Computed<unknown> | Signal<unknown>)[];
+  sourceSlots: number[];
+  value: T;
+  pushed: boolean;
+  [Symbol.iterator]: () => Generator<unknown, T, void>;
+  gen?: Generator<unknown, T, void>;
+  run: () => boolean;
 }
 
-export function s<T>(name: string, v: T): Signal<T> {
+let maxHeightInHeap = 0;
+
+let heap: Computed<unknown>[][] = [];
+let adjustHeap: Computed<unknown>[][] = [];
+for (let i = 0; i < 2010; i++) {
+  heap[i] = [];
+  adjustHeap[i] = [];
+}
+
+export function increaseHeapSize(n: number) {
+  for (let i = heap.length; i < n; i++) {
+    heap[i] = [];
+    adjustHeap[i] = [];
+  }
+}
+
+export function s<T>(v: T): Signal<T> {
   const self: Signal<T> = {
-    name,
     set(v2: T) {
       v = v2;
       for (const o of self.observers) {
-        heap[o.h].push(o);
+        heap[o.height].push(o);
       }
     },
     observers: [],
     observerSlots: [],
-    h: -1,
+    height: -1,
     [Symbol.iterator]: function* () {
-      if (context) {
-        context.sources.push(self);
-        context.sourceSlots.push(self.observerSlots.length);
-        self.observers.push(context.me);
-        self.observerSlots.push(context.sourceSlots.length - 1);
+      if (running) {
+        running.sources.push(self as Signal<unknown>);
+        running.sourceSlots.push(self.observerSlots.length);
+        self.observers.push(running);
+        self.observerSlots.push(running.sourceSlots.length - 1);
       }
       return v;
     },
@@ -40,80 +60,67 @@ export function s<T>(name: string, v: T): Signal<T> {
   return self;
 }
 
-let context: {
-  sources: any[];
-  sourceSlots: number[];
-  h: number;
-  me: any;
-} | null = null;
+let running: Computed<unknown> | null = null;
 
-export function r<A, B, C>(name: string, f: () => Generator<A, B, C>) {
-  const self = {
-    h: 0,
-    hSlot: -1,
-    name,
-    observers: [] as any[],
+export function r<T>(f: () => Generator<unknown, T, void>): Computed<T> {
+  const self: Computed<T> = {
+    height: 0,
+    heapSlot: -1,
+    observers: [],
     observerSlots: [],
-    sources: [] as any[],
-    sourceSlots: [] as number[],
-    v: null as B,
+    sources: [],
+    sourceSlots: [],
+    value: null as T,
     pushed: false,
     [Symbol.iterator]: function* () {
-      if (context) {
-        context.sources.push(self);
-        self.observers.push(context.me);
-        if (self.h >= context.h) {
-          yield self;
+      if (running) {
+        running.sources.push(self);
+        self.observers.push(running);
+        if (self.height >= running.height) {
+          yield;
         }
       }
-      return self.v as B;
+      return self.value;
     },
-    next: undefined as (() => IteratorResult<any, any>) | undefined,
+    gen: undefined,
     run() {
-      const oldc = context;
-      context = {
-        sources: [],
-        sourceSlots: [],
-        h: self.h,
-        me: self,
-      };
-      if (!self.next) {
-        const gen = f();
-        self.next = gen.next.bind(gen);
+      const oldRunning = running;
+      running = self;
+      if (!self.gen) {
+        self.gen = f();
         removeSourceDeps(self);
-        self.sources = context.sources;
-        self.sourceSlots = context.sourceSlots;
-      } else {
-        context.sources = self.sources;
-        context.sourceSlots = self.sourceSlots;
+        self.sources = [];
+        self.sourceSlots = [];
       }
-      let el = self.next();
-      const win = el.done;
-      if (win) {
-        self.v = el.value;
-        self.next = undefined;
+      let el = self.gen.next();
+      if (el.done) {
+        self.value = el.value;
+        self.gen = undefined;
       }
-      context = oldc;
+      running = oldRunning;
 
-      return win;
+      // return true if we ran to completion without changing height
+      // otherwise, something yielded and told us we were at the wrong height
+      return !!el.done;
     },
   };
 
-  self.hSlot = heap[self.h].length;
-  heap[self.h].push(self);
+  // 0 == self.h
+  self.heapSlot = heap[0].length;
+  heap[0].push(self);
 
   return self;
 }
 
-function removeSourceDeps(el: any) {
-  const n2 = el;
-  while (n2.sources!.length) {
-    const source = n2.sources!.pop(),
-      index = n2.sourceSlots!.pop(),
+// taken from solidjs
+function removeSourceDeps(el: Computed<unknown>) {
+  while (el.sources!.length) {
+    const source = el.sources!.pop()!,
+      index = el.sourceSlots!.pop()!,
       obs = source.observers;
     if (obs && obs.length) {
-      const n = obs.pop(),
-        s = source.observerSlots!.pop();
+      const n = obs.pop()!,
+        s = source.observerSlots!.pop()!;
       if (index < obs.length) {
         n.sourceSlots![s] = index;
         obs[index] = n;
@@ -123,29 +130,36 @@ function removeSourceDeps(el: any) {
   }
 }
 
-function adjustHeights(n: any) {
-  adjustHeightsHeap[n.h].push(n);
-  for (let i = n.h; i < adjustHeightsHeap.length; i++) {
-    while (adjustHeightsHeap[i].length) {
-      const el = adjustHeightsHeap[i].shift();
-      let maxh = el.h;
-      let found = false;
-      for (const c of el.sources) {
-        if (c.h >= maxh) {
-          maxh = c.h + 1;
-          found = true;
+function adjustHeights(initial: Computed<unknown>) {
+  let maxHeightInAdjustHeap = initial.height;
+  adjustHeap[initial.height].push(initial);
+  for (let i = initial.height; i <= maxHeightInAdjustHeap; i++) {
+    while (adjustHeap[i].length) {
+      const el = adjustHeap[i].pop()!;
+      let maxSourceHeight = el.height;
+      let foundLargerHeight = false;
+      for (const s of el.sources) {
+        if (s.height >= maxSourceHeight) {
+          maxSourceHeight = s.height + 1;
+          foundLargerHeight = true;
         }
       }
-      if (found) {
-        const last = heap[i].pop()
-        if (el.hSlot < heap[i].length) {
-          heap[i][el.hSlot] = last;
-          last.hSlot = el.hSlot;
+      if (foundLargerHeight) {
+        el.height = maxSourceHeight;
+        if (maxSourceHeight > maxHeightInHeap)
+          maxHeightInHeap = maxSourceHeight;
+        heap[maxSourceHeight].push(el);
+        if (el.heapSlot >= 0) {
+          const last = heap[i].pop()!;
+          if (el.heapSlot < heap[i].length) {
+            heap[i][el.heapSlot] = last;
+            last.heapSlot = el.heapSlot;
+          }
         }
-        el.h = maxh;
-        heap[maxh].push(el);
-        for (const c of el.observers) {
-          adjustHeightsHeap[c.h].push(c);
+        for (const o of el.observers) {
+          adjustHeap[o.height].push(o);
+          if (o.height > maxHeightInAdjustHeap)
+            maxHeightInAdjustHeap = o.height;
         }
       }
     }
@@ -154,20 +168,20 @@ function adjustHeights(n: any) {
 
 export function stabilize() {
   // we never insert something of lower height, only of larger height
-  for (let i = 0; i < heap.length; i++) {
+  for (let i = 0; i <= maxHeightInHeap; i++) {
     while (heap[i].length) {
-      const el = heap[i][0];
-      const s = el.run();
-      if (!s) {
+      const el = heap[i].shift()!;
+      const step = el.run();
+      el.heapSlot = -1;
+      if (!step) {
         adjustHeights(el);
       } else {
-        heap[i].shift();  // remove ourselves
         el.pushed = false;
-        el.hSlot = -1;
-        for (const c of el.observers) {
-          if (!c.pushed) {
-            c.pushed = true;
-            heap[c.h].push(c);
+        for (const o of el.observers) {
+          if (!o.pushed) {
+            o.pushed = true;
+            heap[o.height].push(o);
+            if (o.height > maxHeightInHeap) maxHeightInHeap = o.height;
           }
         }
       }

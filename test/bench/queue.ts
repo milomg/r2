@@ -1,7 +1,6 @@
-
 const equalFn = (a: any, b: any): boolean => a === b;
 const signalOptions: { equals: (a: any, b: any) => boolean } = {
-  equals: equalFn
+  equals: equalFn,
 };
 let ERROR: Error | null = null;
 let runEffects: (queue: Computation<any>[]) => void = runQueue;
@@ -20,7 +19,7 @@ const UNOWNED: OwnerNode = {
   owned: null,
   cleanups: null,
   context: null,
-  owner: null
+  owner: null,
 };
 var Owner: OwnerNode | null = null;
 let Listener: Computation<any> | null = null;
@@ -54,8 +53,10 @@ export interface Computation<T> extends OwnerNode {
   comparator?: (a: T, b: T) => boolean;
 }
 
-
-function createRoot<T>(fn: (dispose: () => void) => T, detachedOwner?: OwnerNode): T {
+function createRoot<T>(
+  fn: (dispose: () => void) => T,
+  detachedOwner?: OwnerNode
+): T {
   detachedOwner && (Owner = detachedOwner);
   const listener = Listener,
     owner = Owner,
@@ -66,7 +67,7 @@ function createRoot<T>(fn: (dispose: () => void) => T, detachedOwner?: OwnerNode
             owned: null,
             cleanups: null,
             context: null,
-            owner
+            owner,
           };
   Owner = root;
   Listener = null;
@@ -89,7 +90,7 @@ function createSignal<T>(
     value,
     observers: [],
     observerSlots: [],
-    comparator: options.equals || undefined
+    comparator: options.equals || undefined,
   };
   return [
     readSignal.bind(s as any) as () => T,
@@ -98,7 +99,7 @@ function createSignal<T>(
         v = (v as (prev: T) => T)(s.value);
       }
       return writeSignal(s, v as T);
-    }
+    },
   ];
 }
 
@@ -137,24 +138,28 @@ function readSignal<T>(this: Signal<T> | Computation<T>): T {
   if (this.state && this.sources) {
     const updates = Updates;
     Updates = null;
-    this.state === STALE ? updateComputation(this as Computation<T>) : lookUpstream(this as Computation<T>);
+    this.state === STALE
+      ? updateComputation(this as Computation<T>)
+      : lookUpstream(this as Computation<T>);
     Updates = updates;
   }
   if (Listener) {
     const sSlot = this.observers ? this.observers.length : 0;
-   
-      Listener.sources.push(this);
-      Listener.sourceSlots.push(sSlot);
-    
-    
-      this.observers.push(Listener);
-      this.observerSlots.push(Listener.sources.length - 1);
-    
+
+    Listener.sources.push(this);
+    Listener.sourceSlots.push(sSlot);
+
+    this.observers.push(Listener);
+    this.observerSlots.push(Listener.sources.length - 1);
   }
   return this.value;
 }
 
-function writeSignal<T>(node: Signal<T> | Computation<T>, value: T, isComp?: boolean): T {
+function writeSignal<T>(
+  node: Signal<T> | Computation<T>,
+  value: T,
+  isComp?: boolean
+): T {
   if (node.comparator) {
     if (node.comparator(node.value, value)) return value;
   }
@@ -224,7 +229,8 @@ function createComputation<T>(
     observers: [],
     observerSlots: [],
   };
-  if (Owner === null){} // No-op, original code had a semicolon here
+  if (Owner === null) {
+  } // No-op, original code had a semicolon here
   else if (Owner !== UNOWNED) {
     if (!Owner.owned) Owner.owned = [c];
     else Owner.owned.push(c);
@@ -237,7 +243,11 @@ function runTop(node: Computation<any>): void {
   if (node.state === PENDING) return lookUpstream(node);
   const ancestors: Computation<any>[] = [node];
   let currentNode: OwnerNode | null = node; // Use a new variable for traversal
-  while ((currentNode = currentNode!.owner) && (!(currentNode as Computation<any>)!.updatedAt || (currentNode as Computation<any>)!.updatedAt! < ExecCount)) {
+  while (
+    (currentNode = currentNode!.owner) &&
+    (!(currentNode as Computation<any>)!.updatedAt ||
+      (currentNode as Computation<any>)!.updatedAt! < ExecCount)
+  ) {
     if (currentNode!.state) ancestors.push(currentNode as Computation<any>); // Type assertion
   }
   for (let i = ancestors.length - 1; i >= 0; i--) {
@@ -267,10 +277,10 @@ function runUpdates<T>(fn: () => T, init: boolean): T {
   } catch (err) {
     if (!ERROR) ERROR = err as Error;
     throw err;
-  }
-  finally {
+  } finally {
     Updates = null;
-    if (!wait && !ERROR) Effects = null; // Don't clear effects if an error occurred and we are init
+    if (!wait && !ERROR)
+      Effects = null; // Don't clear effects if an error occurred and we are init
     else if (!wait && ERROR && init) Effects = null; // Clear effects if an error occurred during init
   }
 }
@@ -295,9 +305,11 @@ function lookUpstream(node: Computation<any>): void {
   if (!node.sources) return; // Add a check for sources
   for (let i = 0; i < node.sources.length; i += 1) {
     const source = node.sources[i] as Signal<any> | Computation<any>; // Type assertion
-    if (source.sources) { // Check if source is a Computation
+    if (source.sources) {
+      // Check if source is a Computation
       if (source.state === STALE) runTop(source as Computation<any>);
-      else if (source.state === PENDING) lookUpstream(source as Computation<any>);
+      else if (source.state === PENDING)
+        lookUpstream(source as Computation<any>);
     }
   }
 }
