@@ -1,115 +1,125 @@
-interface Signal<T> {
-  height: -1;
-  set: (v: T) => void;
-  observers: Computed<unknown>[];
-  observerSlots: number[];
-  [Symbol.iterator]: () => Generator<unknown, T, void>;
-}
-
-interface Computed<T> {
-  height: number;
-  heapSlot: number;
-  observers: Computed<unknown>[];
-  observerSlots: number[];
-  sources: (Computed<unknown> | Signal<unknown>)[];
-  sourceSlots: number[];
-  value: T;
-  pushed: boolean;
-  [Symbol.iterator]: () => Generator<unknown, T, void>;
-  gen?: Generator<unknown, T, void>;
-  run: () => boolean;
-}
-
 let maxHeightInHeap = 0;
 
-let heap: Computed<unknown>[][] = [];
+let heap: (Computed<unknown> | null)[] = [];
 let adjustHeap: Computed<unknown>[][] = [];
 for (let i = 0; i < 2010; i++) {
-  heap[i] = [];
+  heap[i] = null;
   adjustHeap[i] = [];
 }
 
 export function increaseHeapSize(n: number) {
   for (let i = heap.length; i < n; i++) {
-    heap[i] = [];
+    heap[i] = null;
     adjustHeap[i] = [];
   }
 }
 
+function insertIntoHeap(n: Computed<unknown>) {
+  const newHStart = heap[n.height];
+  if (newHStart == null) {
+    heap[n.height] = n;
+  } else {
+    newHStart.prevHeap.nextHeap = n;
+    n.prevHeap = newHStart.prevHeap;
+    newHStart.prevHeap = n;
+    n.nextHeap = newHStart;
+  }
+}
+
+function deleteFromHeap(n: Computed<unknown>) {
+  if (heap[n.height] == n) {
+    heap[n.height] = n.nextHeap;
+  }
+  if (heap[n.height] == n) {
+    heap[n.height] = null;
+  } else {
+    n.prevHeap.nextHeap = n.nextHeap;
+    n.nextHeap.prevHeap = n.prevHeap;
+  }
+  n.prevHeap = n;
+  n.nextHeap = n;
+}
+
+class Signal<T> {
+  constructor(public value: T) {}
+  observers: Computed<unknown>[] = [];
+  observerSlots: number[] = [];
+  height = -1;
+  set(v2: T) {
+    this.value = v2;
+    for (const o of this.observers) {
+      insertIntoHeap(o);
+    }
+  }
+  *[Symbol.iterator]() {
+    if (running) {
+      running.sources.push(this as Signal<unknown>);
+      running.sourceSlots.push(this.observerSlots.length);
+      this.observers.push(running);
+      this.observerSlots.push(running.sourceSlots.length - 1);
+    }
+    return this.value;
+  }
+}
 export function s<T>(v: T): Signal<T> {
-  const self: Signal<T> = {
-    set(v2: T) {
-      v = v2;
-      for (const o of self.observers) {
-        heap[o.height].push(o);
-      }
-    },
-    observers: [],
-    observerSlots: [],
-    height: -1,
-    [Symbol.iterator]: function* () {
-      if (running) {
-        running.sources.push(self as Signal<unknown>);
-        running.sourceSlots.push(self.observerSlots.length);
-        self.observers.push(running);
-        self.observerSlots.push(running.sourceSlots.length - 1);
-      }
-      return v;
-    },
-  };
-  return self;
+  return new Signal(v);
 }
 
 let running: Computed<unknown> | null = null;
 
+class Computed<T> {
+  height = 0;
+  nextHeap: Computed<unknown> = null as any;
+  prevHeap: Computed<unknown> = null as any;
+  observers: Computed<unknown>[] = [];
+  observerSlots: number[] = [];
+  sources: (Computed<unknown> | Signal<unknown>)[] = [];
+  sourceSlots: number[] = [];
+  value: T = null as T;
+  pushed = true;
+  gen: Generator<unknown, T, void> | undefined = undefined;
+  constructor(private f: () => Generator<unknown, T, void>) {
+    this.nextHeap = this;
+    this.prevHeap = this;
+    insertIntoHeap(this);
+  }
+  *[Symbol.iterator]() {
+    if (running) {
+      running.sources.push(this);
+      running.sourceSlots.push(this.observerSlots.length);
+      this.observers.push(running);
+      this.observerSlots.push(running.sourceSlots.length - 1);
+      if (this.height >= running.height) {
+        yield;
+      }
+    }
+    return this.value;
+  }
+
+  run() {
+    const oldRunning = running;
+    running = this;
+    if (!this.gen) {
+      this.gen = this.f();
+      removeSourceDeps(this);
+      this.sources = [];
+      this.sourceSlots = [];
+    }
+    let el = this.gen.next();
+    if (el.done) {
+      this.value = el.value;
+      this.gen = undefined;
+    }
+    running = oldRunning;
+
+    // return true if we ran to completion without changing height
+    // otherwise, something yielded and told us we were at the wrong height
+    return !!el.done;
+  }
+}
+
 export function r<T>(f: () => Generator<unknown, T, void>): Computed<T> {
-  const self: Computed<T> = {
-    height: 0,
-    heapSlot: -1,
-    observers: [],
-    observerSlots: [],
-    sources: [],
-    sourceSlots: [],
-    value: null as T,
-    pushed: false,
-    [Symbol.iterator]: function* () {
-      if (running) {
-        running.sources.push(self);
-        self.observers.push(running);
-        if (self.height >= running.height) {
-          yield;
-        }
-      }
-      return self.value;
-    },
-    gen: undefined,
-    run() {
-      const oldRunning = running;
-      running = self;
-      if (!self.gen) {
-        self.gen = f();
-        removeSourceDeps(self);
-        self.sources = [];
-        self.sourceSlots = [];
-      }
-      let el = self.gen.next();
-      if (el.done) {
-        self.value = el.value;
-        self.gen = undefined;
-      }
-      running = oldRunning;
-
-      // return true if we ran to completion without changing height
-      // otherwise, something yielded and told us we were at the wrong height
-      return !!el.done;
-    },
-  };
-
-  // 0 == self.h
-  self.heapSlot = heap[0].length;
-  heap[0].push(self);
-
-  return self;
+  return new Computed(f);
 }
 
 // taken from solidjs
@@ -145,17 +155,12 @@ function adjustHeights(initial: Computed<unknown>) {
         }
       }
       if (foundLargerHeight) {
+        if (el.pushed) deleteFromHeap(el);
         el.height = maxSourceHeight;
         if (maxSourceHeight > maxHeightInHeap)
           maxHeightInHeap = maxSourceHeight;
-        heap[maxSourceHeight].push(el);
-        if (el.heapSlot >= 0) {
-          const last = heap[i].pop()!;
-          if (el.heapSlot < heap[i].length) {
-            heap[i][el.heapSlot] = last;
-            last.heapSlot = el.heapSlot;
-          }
-        }
+        insertIntoHeap(el);
+
         for (const o of el.observers) {
           adjustHeap[o.height].push(o);
           if (o.height > maxHeightInAdjustHeap)
@@ -169,22 +174,24 @@ function adjustHeights(initial: Computed<unknown>) {
 export function stabilize() {
   // we never insert something of lower height, only of larger height
   for (let i = 0; i <= maxHeightInHeap; i++) {
-    while (heap[i].length) {
-      const el = heap[i].shift()!;
+    let el = heap[i];
+    while (el) {
+      deleteFromHeap(el);
+      el.pushed = false;
       const step = el.run();
-      el.heapSlot = -1;
       if (!step) {
         adjustHeights(el);
+        el.pushed = true;
       } else {
-        el.pushed = false;
         for (const o of el.observers) {
           if (!o.pushed) {
+            insertIntoHeap(o);
             o.pushed = true;
-            heap[o.height].push(o);
             if (o.height > maxHeightInHeap) maxHeightInHeap = o.height;
           }
         }
       }
+      el = heap[i];
     }
   }
 }
